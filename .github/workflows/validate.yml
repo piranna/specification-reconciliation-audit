@@ -1,0 +1,67 @@
+name: Validate Agent Skill
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate local structure
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path(".")
+          skill = root / "skills/specification-reconciliation-audit"
+          skill_md = skill / "SKILL.md"
+
+          required = [
+              skill_md,
+              skill / "references/audit-checklist.md",
+              skill / "references/finding-and-reporting.md",
+          ]
+
+          for path in required:
+              if not path.is_file():
+                  raise SystemExit(f"Missing required file: {path}")
+
+          text = skill_md.read_text()
+
+          if not text.startswith("---\n"):
+              raise SystemExit("SKILL.md does not start with frontmatter")
+
+          parts = text.split("---", 2)
+          if len(parts) < 3:
+              raise SystemExit("SKILL.md frontmatter is not closed")
+
+          frontmatter = parts[1]
+
+          if "name: specification-reconciliation-audit" not in frontmatter:
+              raise SystemExit("Missing or incorrect skill name")
+
+          if "description:" not in frontmatter:
+              raise SystemExit("Missing skill description")
+
+          refs = set(re.findall(r'`(references/[^`]+\.md)`', text))
+          for ref in refs:
+              if not (skill / ref).is_file():
+                  raise SystemExit(f"Missing referenced file: {ref}")
+
+          print("Local structural validation OK")
+          PY
+
+      - name: Check whitespace
+        run: git diff --check

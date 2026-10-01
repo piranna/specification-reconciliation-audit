@@ -1,0 +1,132 @@
+#!/bin/sh
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+skill="$root/skills/specification-reconciliation-audit"
+failed=0
+
+echo "===== STRUCTURE ====="
+
+for path in \
+  "$skill/SKILL.md" \
+  "$skill/references/audit-checklist.md" \
+  "$skill/references/finding-and-reporting.md"
+do
+  if [ -f "$path" ]; then
+    echo "OK: ${path#$root/}"
+  else
+    echo "MISSING: ${path#$root/}"
+    failed=1
+  fi
+done
+
+echo
+echo "===== FRONTMATTER ====="
+
+python3 - "$skill/SKILL.md" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+
+errors = []
+
+if not text.startswith("---\n"):
+    errors.append("SKILL.md does not start with YAML frontmatter")
+
+parts = text.split("---", 2)
+
+if len(parts) < 3:
+    errors.append("SKILL.md frontmatter is not closed")
+else:
+    frontmatter = parts[1]
+
+    if "name: specification-reconciliation-audit" not in frontmatter:
+        errors.append("missing or incorrect skill name")
+
+    if "description:" not in frontmatter:
+        errors.append("missing description")
+
+if errors:
+    for error in errors:
+        print(f"ERROR: {error}")
+    raise SystemExit(1)
+
+print("OK")
+PY
+rc_frontmatter=$?
+echo "frontmatter rc=$rc_frontmatter"
+
+if [ "$rc_frontmatter" -ne 0 ]; then
+  failed=1
+fi
+
+echo
+echo "===== REFERENCE LINKS ====="
+
+python3 - "$skill" <<'PY'
+from pathlib import Path
+import re
+import sys
+
+skill = Path(sys.argv[1])
+text = (skill / "SKILL.md").read_text()
+
+refs = sorted(set(re.findall(r'`(references/[^`]+\.md)`', text)))
+missing = []
+
+for ref in refs:
+    target = skill / ref
+    if target.is_file():
+        print(f"OK: {ref}")
+    else:
+        print(f"MISSING: {ref}")
+        missing.append(ref)
+
+if missing:
+    raise SystemExit(1)
+PY
+rc_refs=$?
+echo "references rc=$rc_refs"
+
+if [ "$rc_refs" -ne 0 ]; then
+  failed=1
+fi
+
+echo
+echo "===== SKILL SIZE ====="
+wc -l \
+  "$skill/SKILL.md" \
+  "$skill/references/audit-checklist.md" \
+  "$skill/references/finding-and-reporting.md"
+
+echo
+echo "===== WHITESPACE ====="
+git -C "$root" --no-pager diff --check
+rc_whitespace=$?
+echo "whitespace rc=$rc_whitespace"
+
+if [ "$rc_whitespace" -ne 0 ]; then
+  failed=1
+fi
+
+echo
+echo "===== GH AGENT SKILL VALIDATION ====="
+gh skill publish --dry-run "$root"
+rc_gh=$?
+echo "gh-skill rc=$rc_gh"
+
+if [ "$rc_gh" -ne 0 ]; then
+  failed=1
+fi
+
+echo
+echo "===== RESULT ====="
+
+if [ "$failed" -eq 0 ]; then
+  echo "VALIDATION OK"
+else
+  echo "VALIDATION FAILED"
+fi
+
+echo "validation rc=$failed"
